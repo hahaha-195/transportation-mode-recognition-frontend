@@ -450,7 +450,7 @@ export default function TrajectoryPredictor() {
                         outerRadius={80}
                         paddingAngle={2}
                         dataKey="value"
-                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(1)}%`}
+label={({ name, percent }) => `${name} ${percent !== undefined ? (percent * 100).toFixed(1) : '0'}%`}
                       >
                         {pieChartData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -534,4 +534,9 @@ export default function TrajectoryPredictor() {
       </div>
     </div>
   );
+}
+declare global {
+  interface Window {
+    AMap: any;
+  }
 }

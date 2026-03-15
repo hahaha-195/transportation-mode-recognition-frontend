@@ -40,7 +40,7 @@ import {
   faCircleExclamation, faRoute, faBrain, faClock, faAward,
   faShield, faBullseye, faZap, faDatabase
 } from '@fortawesome/free-solid-svg-icons';
-import TrajectoryPredictor from '../components/components/TrajectoryPredictor';
+import TrajectoryPredictor from '../components/TrajectoryPredictor';
 // 初始化FontAwesome图标库
 library.add(
   faExclamationTriangle, faCheckCircle, faArrowUp, faChevronDown,
@@ -210,8 +210,8 @@ const container = {
 
 const item = {
   hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 100, damping: 15 } }
-};
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 10 } }
+} as const;
 
 export default function Exp2Page() {
   const [selectedTrajectory, setSelectedTrajectory] = useState<string>("");
@@ -695,7 +695,10 @@ export default function Exp2Page() {
                         fontSize: 14,
                         padding: 12
                       }}
-                      formatter={(value) => [`${(value*100).toFixed(1)}%`, 'F1分数']}
+                      formatter={(value) => {
+                        if (value === undefined) return ['0%', 'F1分数'];
+                        return [`${(value * 100).toFixed(1)}%`, 'F1分数'];
+                      }}
                     />
                     <Bar dataKey="exp1" name="Exp1（仅轨迹）" fill="#0090ff" radius={[6, 6, 0, 0]} barSize={40} />
                     <Bar dataKey="exp2" name="Exp2（轨迹+KG）" fill="#00f0ff" radius={[6, 6, 0, 0]} barSize={40} />
@@ -792,7 +795,7 @@ export default function Exp2Page() {
                       fill: '#ff6b6b',
                       fontSize: 14,
                       fontWeight: 'bold',
-                      backgroundColor: 'rgba(255,107,107,0.1)',
+                      // backgroundColor: 'rgba(255,107,107,0.1)',
                       padding: 6,
                       borderRadius: 4
                     }} 
