@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from 'framer-motion';
+import { Variants } from 'framer-motion';
 import { AccuracyChart } from '@/components/AccuracyChart';
 
 const container = {
@@ -11,9 +12,9 @@ const container = {
   },
 };
 
-const item = {
+const item: Variants = {
   hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 100, damping: 15 } }
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 10 } }
 };
 
 // 原始实验数据（完全匹配你的项目）

@@ -5,7 +5,7 @@ declare global {
   }
 }
 import { MD5 } from 'crypto-js'; // 需要安装 crypto-js
-
+import { Variants } from 'framer-motion';
 // 生成高德地图请求签名
 const generateAMapSig = (params: Record<string, string>, secretKey: string): string => {
   // 1. 按字典序排序参数
@@ -45,7 +45,7 @@ import {
   faCircleExclamation, faRoute, faBrain, faClock, faAward,
   faShield, faBullseye, faZap, faDatabase
 } from '@fortawesome/free-solid-svg-icons';
-import TrajectoryPredictor from '../components/TrajectoryPredictor';
+import TrajectoryPredictor from '@/components/TrajectoryPredictor';
 // 初始化FontAwesome图标库
 library.add(
   faExclamationTriangle, faCheckCircle, faArrowUp, faChevronDown,
@@ -701,9 +701,10 @@ export default function Exp2Page() {
                         padding: 12
                       }}
                       formatter={(value) => {
-                        if (value === undefined) return ['0%', 'F1分数'];
-                        return [`${(value * 100).toFixed(1)}%`, 'F1分数'];
-                      }}
+                        const num = Number(value);
+                        if (isNaN(num)) return ['0%', 'F1分数'];
+                        return [`${(num * 100).toFixed(1)}%`, 'F1分数'];
+                      }}    
                     />
                     <Bar dataKey="exp1" name="Exp1（仅轨迹）" fill="#0090ff" radius={[6, 6, 0, 0]} barSize={40} />
                     <Bar dataKey="exp2" name="Exp2（轨迹+KG）" fill="#00f0ff" radius={[6, 6, 0, 0]} barSize={40} />
@@ -801,8 +802,8 @@ export default function Exp2Page() {
                       fontSize: 14,
                       fontWeight: 'bold',
                       // backgroundColor: 'rgba(255,107,107,0.1)',
-                      padding: 6,
-                      borderRadius: 4
+                      // padding: 6,
+                      // borderRadius: 4
                     }} 
                   />
                   {/* 🔥 仅用 Bar 组件，无 HorizontalBar */}
