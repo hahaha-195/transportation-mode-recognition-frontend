@@ -1,4 +1,9 @@
 "use client";
+declare global {
+  interface Window {
+    AMap: any;
+  }
+}
 import { MD5 } from 'crypto-js'; // 需要安装 crypto-js
 
 // 生成高德地图请求签名

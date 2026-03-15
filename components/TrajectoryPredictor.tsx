@@ -535,8 +535,3 @@ label={({ name, percent }) => `${name} ${percent !== undefined ? (percent * 100)
     </div>
   );
 }
-declare global {
-  interface Window {
-    AMap: any;
-  }
-}
