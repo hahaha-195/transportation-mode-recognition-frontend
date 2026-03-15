@@ -1,6 +1,32 @@
 "use client";
+import { MD5 } from 'crypto-js'; // 需要安装 crypto-js
+
+// 生成高德地图请求签名
+const generateAMapSig = (params: Record<string, string>, secretKey: string): string => {
+  // 1. 按字典序排序参数
+  const sortedParams = Object.keys(params)
+    .sort()
+    .map(key => `${key}=${params[key]}`)
+    .join('&');
+  
+  // 2. 拼接安全密钥
+  const strToSign = `${sortedParams}${secretKey}`;
+  
+  // 3. MD5 加密得到 sig
+  return MD5(strToSign).toString();
+};
+if (typeof window !== 'undefined' && !window.AMap) {
+  const script = document.createElement('script');
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=f767f1bd274ac75111bbffd9b7995a48`;
+  script.async = true; // 异步加载，不阻塞页面渲染
+  script.defer = true; // 延迟执行，等DOM加载完再初始化
+  script.crossOrigin = 'anonymous';
+  // 👇 关键：强制缓存SDK，30天内不用重复下载
+  script.setAttribute('cache-control', 'max-age=2592000');
+  document.head.appendChild(script);
+}
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 // 🔥 彻底删除 HorizontalBarChart、HorizontalBar，仅保留Recharts支持的组件
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -22,7 +48,83 @@ library.add(
   faShield, faBullseye, faZap, faDatabase
 );
 
-// ===================== 以下业务逻辑完全保留，仅修改水平柱状图渲染部分 =====================
+// ===================== 轨迹地图数据配置 =====================
+// 模拟6类轨迹的高德地图坐标点（可根据实际需求调整）
+const trajectoryMapData = {
+  walk: {
+    name: "步行到地铁站（1km）",
+    path: [
+      [116.397428, 39.90923], // 起点：天安门
+      [116.407428, 39.90923], // 中点
+      [116.417428, 39.90923]  // 终点：王府井地铁站
+    ],
+    startName: "天安门",
+    endName: "王府井地铁站",
+    color: "#00f0ff"
+  },
+  bike: {
+    name: "骑行2公里到公交站",
+    path: [
+      [116.387428, 39.91923],
+      [116.397428, 39.91423],
+      [116.407428, 39.90923]
+    ],
+    startName: "西单",
+    endName: "天安门东公交站",
+    color: "#00a0ff"
+  },
+  bus: {
+    name: "公交5路转地铁2号线",
+    path: [
+      [116.377428, 39.92923],
+      [116.387428, 39.91923],
+      [116.397428, 39.90923],
+      [116.407428, 39.90423]
+    ],
+    startName: "复兴门",
+    endName: "崇文门地铁站",
+    color: "#0080ff"
+  },
+  subway: {
+    name: "地铁3号线通勤（5站）",
+    path: [
+      [116.427428, 39.90923],
+      [116.437428, 39.91423],
+      [116.447428, 39.91923],
+      [116.457428, 39.92423],
+      [116.467428, 39.92923]
+    ],
+    startName: "东单",
+    endName: "三元桥",
+    color: "#0060ff"
+  },
+  car: {
+    name: "私家车上下班（10km）",
+    path: [
+      [116.307428, 39.90923],
+      [116.337428, 39.91423],
+      [116.367428, 39.91923],
+      [116.397428, 39.92423]
+    ],
+    startName: "石景山",
+    endName: "朝阳区CBD",
+    color: "#0040ff"
+  },
+  taxi: {
+    name: "网约车出行（机场接送）",
+    path: [
+      [116.507428, 39.90923],
+      [116.477428, 39.91423],
+      [116.447428, 39.91923],
+      [116.417428, 39.92423]
+    ],
+    startName: "首都机场",
+    endName: "东直门",
+    color: "#0020ff"
+  }
+};
+
+// ===================== 原有业务逻辑 =====================
 const bestModelMeta = {
   id: "exp2",
   name: "轨迹+基础知识图谱融合模型",
@@ -116,16 +218,160 @@ export default function Exp2Page() {
   const [predictionResult, setPredictionResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [showToTopBtn, setShowToTopBtn] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false); // 地图加载状态
+  const mapRef = useRef<HTMLDivElement>(null); // 地图容器ref
+  const amapRef = useRef<any>(null); // 高德地图实例ref
 
+  // ===================== 高德地图初始化逻辑 =====================
   useEffect(() => {
+    // 加载高德地图JS API
+    const loadAMap = () => {
+      if (window.AMap) {
+        initMap();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = `https://webapi.amap.com/maps?v=2.0&key=f767f1bd274ac75111bbffd9b7995a48`;
+      script.async = true;
+      script.onload = initMap;
+      script.onerror = () => console.error('高德地图加载失败');
+      document.body.appendChild(script);
+
+      return () => {
+        document.body.removeChild(script);
+      };
+    };
+
+    // 初始化地图
+    const initMap = () => {
+      if (!mapRef.current) return;
+      
+      // 创建地图实例
+      const map = new window.AMap.Map(mapRef.current, {
+        zoom: 12, // 初始缩放级别
+        center: [116.397428, 39.90923], // 初始中心点（北京）
+        resizeEnable: true,
+        mapStyle: 'amap://styles/darkblue', // 深色风格，适配页面主题
+        showLabel: true
+      });
+
+      amapRef.current = map;
+      setMapLoaded(true);
+
+      // 添加地图控件
+      map.addControl(new window.AMap.Scale());
+      map.addControl(new window.AMap.Zoom({ position: 'RB' }));
+    };
+
+    loadAMap();
+
+    // 滚动监听逻辑
     const handleScroll = () => {
       setShowToTopBtn(window.scrollY > 300);
     };
     window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      // 销毁地图实例
+      if (amapRef.current) {
+        amapRef.current.destroy();
+      }
+    };
   }, []);
 
-  // 🔥 接口部分
+  // ===================== 轨迹选择后更新地图 =====================
+  useEffect(() => {
+    if (!mapLoaded || !selectedTrajectory || !amapRef.current) return;
+
+    // 清空地图上的覆盖物
+    amapRef.current.clearMap();
+
+    const trajectory = trajectoryMapData[selectedTrajectory as keyof typeof trajectoryMapData];
+    if (!trajectory) return;
+
+    // 设置地图中心点和缩放级别
+    amapRef.current.setCenter(trajectory.path[Math.floor(trajectory.path.length / 2)]);
+    amapRef.current.setZoom(14);
+
+    // 绘制轨迹线
+    const polyline = new window.AMap.Polyline({
+      path: trajectory.path,
+      strokeColor: trajectory.color,
+      strokeWeight: 6,
+      strokeOpacity: 0.8,
+      strokeStyle: 'solid',
+      zIndex: 50
+    });
+    polyline.addTo(amapRef.current);
+
+    // 添加起点标记
+    const startMarker = new window.AMap.Marker({
+      position: trajectory.path[0],
+      icon: new window.AMap.Icon({
+        size: new window.AMap.Size(30, 30),
+        image: 'https://webapi.amap.com/theme/v1.3/markers/n/start.png',
+        imageSize: new window.AMap.Size(30, 30)
+      }),
+      title: `起点: ${trajectory.startName}`,
+      zIndex: 100
+    });
+    startMarker.addTo(amapRef.current);
+
+    // 添加终点标记
+    const endMarker = new window.AMap.Marker({
+      position: trajectory.path[trajectory.path.length - 1],
+      icon: new window.AMap.Icon({
+        size: new window.AMap.Size(30, 30),
+        image: 'https://webapi.amap.com/theme/v1.3/markers/n/end.png',
+        imageSize: new window.AMap.Size(30, 30)
+      }),
+      title: `终点: ${trajectory.endName}`,
+      zIndex: 100
+    });
+    endMarker.addTo(amapRef.current);
+
+    // 添加轨迹名称信息窗
+    const infoWindow = new window.AMap.InfoWindow({
+      content: `<div style="color:#fff; background:rgba(0,112,243,0.8); padding:8px; border-radius:6px;">
+                  <strong>${trajectory.name}</strong>
+                </div>`,
+      position: trajectory.path[Math.floor(trajectory.path.length / 2)],
+      offset: new window.AMap.Pixel(0, -30)
+    });
+    infoWindow.open(amapRef.current);
+
+    // 预测结果展示时添加识别结果标记
+    if (predictionResult) {
+      const resultMarker = new window.AMap.Marker({
+        position: trajectory.path[Math.floor(trajectory.path.length / 2)],
+        icon: new window.AMap.Icon({
+          size: new window.AMap.Size(40, 40),
+          image: `https://webapi.amap.com/theme/v1.3/markers/b/${
+            predictionResult.predicted === predictionResult.trueLabel ? 'green' : 'red'
+          }_circle.png`,
+          imageSize: new window.AMap.Size(40, 40)
+        }),
+        title: `识别结果: ${predictionResult.predicted} (置信度: ${predictionResult.confidence}%)`,
+        zIndex: 150
+      });
+      resultMarker.addTo(amapRef.current);
+
+      // 添加识别结果信息窗
+      const resultInfoWindow = new window.AMap.InfoWindow({
+        content: `<div style="color:#fff; background:rgba(0,240,255,0.9); padding:10px; border-radius:8px; min-width:200px;">
+                    <div><strong>识别结果:</strong> ${predictionResult.predicted}</div>
+                    <div><strong>置信度:</strong> ${predictionResult.confidence}%</div>
+                    <div><strong>真实类型:</strong> ${predictionResult.trueLabel}</div>
+                  </div>`,
+        position: trajectory.path[Math.floor(trajectory.path.length / 2)],
+        offset: new window.AMap.Pixel(0, -50)
+      });
+      resultInfoWindow.open(amapRef.current, resultMarker);
+    }
+  }, [selectedTrajectory, predictionResult, mapLoaded]);
+
+  // ===================== 原有接口调用逻辑 =====================
   const handlePredict = async () => {
     if (!selectedTrajectory) {
       alert("请选择示例轨迹！");
@@ -256,6 +502,7 @@ export default function Exp2Page() {
         initial="hidden"
         animate="show"
       >
+        {/* 原有头部内容 */}
         <motion.section variants={item} className="mb-12 text-center w-full">
           <div className="inline-flex items-center gap-3 mb-6 justify-center">
             <div className="w-1.5 h-10 bg-gradient-to-b from-[#0070f3] to-[#00f0ff] rounded-full"></div>
@@ -328,6 +575,7 @@ export default function Exp2Page() {
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 原有数据卡片 */}
         <motion.section variants={item} className="mb-16 w-full">
           <div className="flex justify-center gap-8 md:gap-12 lg:gap-16 flex-wrap px-4 w-full">
             {[
@@ -354,6 +602,7 @@ export default function Exp2Page() {
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 原有核心问题 */}
         <motion.section variants={item} className="mb-16 w-full">
           <div className="exp2-glass-card p-8 md:p-10 rounded-xl w-full">
             <h2 className="text-3xl font-bold exp2-highlight mb-8 flex items-center gap-3">
@@ -381,6 +630,7 @@ export default function Exp2Page() {
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 原有模型参数 */}
         <motion.section variants={item} className="mb-16 w-full">
           <div className="exp2-glass-card p-8 md:p-10 rounded-xl w-full">
             <h2 className="text-3xl font-bold exp2-highlight mb-8 flex items-center gap-3">
@@ -501,6 +751,7 @@ export default function Exp2Page() {
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 原有模型对比 */}
         <motion.section variants={item} className="mb-16 w-full">
           <div className="exp2-glass-card p-8 md:p-10 rounded-xl w-full">
             <h2 className="text-3xl font-bold exp2-highlight mb-8 flex items-center gap-3">
@@ -566,90 +817,114 @@ export default function Exp2Page() {
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 🔥 核心修改：轨迹预测演示模块（新增高德地图） */}
         <motion.section variants={item} className="mb-16 w-full">
           <div className="exp2-glass-card p-8 md:p-10 rounded-xl w-full">
             <h2 className="text-3xl font-bold exp2-highlight mb-8 flex items-center gap-3">
               <span className="w-1.5 h-8 bg-[#00f0ff] rounded-full"></span>
               模型实时识别演示（对接真实后端接口）
             </h2>
-            <div className="max-w-3xl mx-auto w-full">
-              <div className="mb-8 w-full">
-                <label className="block exp2-subtitle mb-3 text-lg">选择示例轨迹</label>
-                <div className="relative w-full">
-                  <select
-                    value={selectedTrajectory}
-                    onChange={(e) => setSelectedTrajectory(e.target.value)}
-                    className="w-full bg-[rgba(15,23,42,0.8)] border border-[rgba(0,240,255,0.4)] rounded-xl px-5 py-4 text-white text-lg appearance-none focus:outline-none focus:ring-2 focus:ring-[#00f0ff]/60"
-                  >
-                    <option value="" disabled>请选择示例轨迹...</option>
-                    {exampleTrajectories.map((item) => (
-                      <option key={item.value} value={item.value} className="bg-[rgba(15,23,42,0.9)] text-white">
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                  <FontAwesomeIcon icon={faChevronDown} className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none text-xl" />
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-6xl mx-auto w-full">
+              {/* 左侧：轨迹选择 + 预测操作 + 结果展示 */}
+              <div className="flex flex-col gap-6">
+                <div className="w-full">
+                  <label className="block exp2-subtitle mb-3 text-lg">选择示例轨迹</label>
+                  <div className="relative w-full">
+                    <select
+                      value={selectedTrajectory}
+                      onChange={(e) => setSelectedTrajectory(e.target.value)}
+                      className="w-full bg-[rgba(15,23,42,0.8)] border border-[rgba(0,240,255,0.4)] rounded-xl px-5 py-4 text-white text-lg appearance-none focus:outline-none focus:ring-2 focus:ring-[#00f0ff]/60"
+                    >
+                      <option value="" disabled>请选择示例轨迹...</option>
+                      {exampleTrajectories.map((item) => (
+                        <option key={item.value} value={item.value} className="bg-[rgba(15,23,42,0.9)] text-white">
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    <FontAwesomeIcon icon={faChevronDown} className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none text-xl" />
+                  </div>
                 </div>
+
+                <motion.button
+                  onClick={handlePredict}
+                  disabled={loading || !selectedTrajectory}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full bg-gradient-to-r from-[#0070f3] to-[#00f0ff] hover:from-[#0051a8] hover:to-[#00d0e6] text-white font-bold py-4 px-8 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed text-lg"
+                >
+                  {loading ? (
+                    <div className="flex items-center justify-center gap-3">
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      模型推理中...
+                    </div>
+                  ) : (
+                    "调用模型开始预测"
+                  )}
+                </motion.button>
+
+                <AnimatePresence>
+                  {predictionResult && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="mt-6 p-8 rounded-2xl bg-[rgba(0,112,243,0.1)] border border-[rgba(0,240,255,0.4)] text-center w-full"
+                    >
+                      <h4 className="exp2-highlight font-bold mb-6 text-2xl">预测结果</h4>
+                      
+                      {renderConfidenceRing(predictionResult.confidence)}
+                      
+                      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 text-lg">
+                        <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
+                          <span className="text-gray-300 block mb-2">预测类别：</span>
+                          <span className="text-white font-bold text-xl">{predictionResult.predicted}</span>
+                        </div>
+                        <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
+                          <span className="text-gray-300 block mb-2">置信度：</span>
+                          <span className="text-white font-bold text-xl">{predictionResult.confidence}%</span>
+                        </div>
+                        <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
+                          <span className="text-gray-300 block mb-2">真实类别：</span>
+                          <span className="text-green-400 font-bold text-xl">{predictionResult.trueLabel}</span>
+                        </div>
+                      </div>
+
+                      {predictionResult.inferenceTime && (
+                        <div className="mt-6 text-base text-gray-200">
+                          推理耗时：{predictionResult.inferenceTime}ms | 数据来源：真实模型计算
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
-              <motion.button
-                onClick={handlePredict}
-                disabled={loading || !selectedTrajectory}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                className="w-full bg-gradient-to-r from-[#0070f3] to-[#00f0ff] hover:from-[#0051a8] hover:to-[#00d0e6] text-white font-bold py-4 px-8 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed mb-10 text-lg"
-              >
-                {loading ? (
-                  <div className="flex items-center justify-center gap-3">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    模型推理中...
+              {/* 右侧：高德地图可视化 */}
+              {/* // 替换原有地图容器的JSX */}
+              <div className="rounded-2xl overflow-hidden border border-[rgba(0,240,255,0.4)] bg-[rgba(15,23,42,0.8)] h-[500px] w-full">
+                {!mapLoaded ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-6 bg-[rgba(15,23,42,0.9)]">
+                    {/* 更友好的加载动画 */}
+                    <div className="relative w-20 h-20">
+                      <div className="absolute inset-0 border-4 border-[#0070f3] border-t-[#00f0ff] rounded-full animate-spin"></div>
+                      <div className="absolute inset-2 border-2 border-transparent border-t-[#00f0ff] rounded-full animate-spin [animation-duration:1.5s]"></div>
+                    </div>
+                    <p className="text-lg text-gray-300">高德地图资源加载中...</p>
+                    <p className="text-sm text-gray-500">预计耗时2-3秒，加载完成后可查看轨迹可视化</p>
                   </div>
                 ) : (
-                  "调用模型开始预测"
+                  <div ref={mapRef} className="w-full h-full" style={{ minHeight: '400px' }}></div>
                 )}
-              </motion.button>
-
-              <AnimatePresence>
-                {predictionResult && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    className="mt-6 p-8 rounded-2xl bg-[rgba(0,112,243,0.1)] border border-[rgba(0,240,255,0.4)] text-center w-full"
-                  >
-                    <h4 className="exp2-highlight font-bold mb-6 text-2xl">预测结果</h4>
-                    
-                    {renderConfidenceRing(predictionResult.confidence)}
-                    
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 text-lg">
-                      <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
-                        <span className="text-gray-300 block mb-2">预测类别：</span>
-                        <span className="text-white font-bold text-xl">{predictionResult.predicted}</span>
-                      </div>
-                      <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
-                        <span className="text-gray-300 block mb-2">置信度：</span>
-                        <span className="text-white font-bold text-xl">{predictionResult.confidence}%</span>
-                      </div>
-                      <div className="bg-[rgba(15,23,42,0.5)] p-4 rounded-lg">
-                        <span className="text-gray-300 block mb-2">真实类别：</span>
-                        <span className="text-green-400 font-bold text-xl">{predictionResult.trueLabel}</span>
-                      </div>
-                    </div>
-
-                    {predictionResult.inferenceTime && (
-                      <div className="mt-6 text-base text-gray-200">
-                        推理耗时：{predictionResult.inferenceTime}ms | 数据来源：真实模型计算
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              </div>
             </div>
           </div>
         </motion.section>
 
         <div className="w-full h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent my-16"></div>
 
+        {/* 原有应用场景 */}
         <motion.section variants={item} className="mb-20 w-full">
           <div className="exp2-glass-card p-8 md:p-10 rounded-xl w-full">
             <h2 className="text-3xl font-bold exp2-highlight mb-8 flex items-center gap-3">
